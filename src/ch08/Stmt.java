@@ -1,8 +1,13 @@
 package ch08;
 
-sealed interface Stmt {
-}
+import java.util.List;
 
-record Expression(/* to add!!!! */) implements Stmt {}
+sealed interface Stmt {}
 
-record Print(/* to add!!!! */) implements Stmt {}
+record Expression(Expr expression) implements Stmt {}
+
+record Print(Expr expression) implements Stmt {}
+
+record Var(Token name, Expr initializer) implements Stmt {}
+
+record Block(List<Stmt> statements) implements Stmt {}

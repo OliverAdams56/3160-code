@@ -1,14 +1,59 @@
-package ch07;
+package ch08;
 
+import java.util.List;
 import java.util.Objects;
 
 class Interpreter {
-    void interpret(Expr expression) {
+    private Environment environment = new Environment();
+
+    void interpret(List<Stmt> statements) {
         try {
-            Object value = evaluate(expression);
-            IO.println(stringify(value));
+            for (Stmt statement : statements) {
+                execute(statement);
+            }
         } catch (RuntimeError error) {
             Lox.runtimeError(error);
+        }
+    }
+
+    private void execute(Stmt stmt) {
+        switch (stmt) {
+            case Expression expressionStmt -> visitExpressionStmt(expressionStmt);
+            case Print printStmt -> visitPrintStmt(printStmt);
+            case Var varStmt -> visitVarStmt(varStmt);
+            case Block blockStmt -> visitBlockStmt(blockStmt);
+        }
+    }
+
+    private void visitExpressionStmt(Expression expressionStmt) {
+        evaluate(expressionStmt.expression());
+    }
+
+    private void visitPrintStmt(Print printStmt) {
+        Object value = evaluate(printStmt.expression());
+        IO.println(stringify(value));
+    }
+
+    private void visitVarStmt(Var varStmt) {
+        Object value = varStmt.initializer() == null ? null : evaluate(varStmt.initializer());
+        environment.define(varStmt.name().lexeme(), value);
+    }
+
+    private void visitBlockStmt(Block blockStmt) {
+        executeBlock(blockStmt.statements(), new Environment(environment));
+    }
+
+    void executeBlock(List<Stmt> statements, Environment environment) {
+        Environment previous = this.environment;
+
+        try {
+            this.environment = environment;
+
+            for (Stmt statement : statements) {
+                execute(statement);
+            }
+        } finally {
+            this.environment = previous;
         }
     }
 
@@ -18,6 +63,8 @@ class Interpreter {
             case Literal literal -> visitLiteralExpr(literal);
             case Unary unary -> visitUnaryExpr(unary);
             case Binary binary -> visitBinaryExpr(binary);
+            case Variable variable -> visitVariableExpr(variable);
+            case Assign assign -> visitAssignExpr(assign);
         };
     }
 
@@ -112,6 +159,16 @@ class Interpreter {
             }
             default -> throw new AssertionError("Should be unreachable!");
         };
+    }
+
+    private Object visitVariableExpr(Variable variable) {
+        return environment.lookup(variable.name());
+    }
+
+    private Object visitAssignExpr(Assign assignExpr) {
+        Object value = evaluate(assignExpr.value());
+        environment.assign(assignExpr.name(), value);
+        return value;
     }
 
     private boolean isTruthy(Object object) {
