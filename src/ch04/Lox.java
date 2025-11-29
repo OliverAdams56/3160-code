@@ -1,3 +1,7 @@
+//TOKENS
+//javac -g -d src/ch06/classes -sourcepath src src/ch06/*.java
+//java ch04.Lox04
+//jdb -classpath . ch04.Lox04
 package ch04;
 
 import java.io.IOException;
