@@ -1,28 +1,43 @@
-package ch08;
+package ch10;
 
 import java.util.ArrayList;
 import java.util.List;
 
-import static ch08.TokenType.*;
+import static ch10.TokenType.*;
 
 /*
 program        → declaration* EOF ;
-declaration    → varDecl | statement ;
+declaration    → funDecl | varDecl | statement ;
+funDecl        → "fun" function ;
+function       → IDENTIFIER "(" parameters? ")" block ;
+parameters     → IDENTIFIER ( "," IDENTIFIER )* ;
 varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
-statement      → exprStmt | printStmt | block ;
+statement      → exprStmt | printStmt | block | ifStmt | whileStmt | forStmt | returnStmt ;
 exprStmt       → expression ";" ;
 printStmt      → "print" expression ";" ;
 block          → "{" declaration* "}" ;
+ifStmt         → "if" "(" expression ")" statement ( "else" statement )? ;
+whileStmt      → "while" "(" expression ")" statement ;
+forStmt        → "for" "("
+                 ( varDecl | exprStmt | ";" )
+                 expression? ";"
+                 expression? ")"
+                 statement ;
+returnStmt     → "return" expression? ";" ;
 
 expression     → assignment ;
 assignment     → IDENTIFIER "=" assignment
-               | equality ;
+               | logic_or ;
+logic_or       → logic_and ( "or" logic_and )* ;
+logic_and      → equality ( "and" equality )* ;
 equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 term           → factor ( ( "-" | "+" ) factor )* ;
 factor         → unary ( ( "/" | "*" ) unary )* ;
 unary          → ( "!" | "-" ) unary
-               | primary ;
+               | call ;
+call           → primary ( "(" arguments? ")" )* ;
+arguments      → expression ( "," expression )* ;
 primary        → NUMBER | STRING
                | "true" | "false" | "nil"
                | "(" expression ")"
@@ -50,10 +65,13 @@ class Parser {
         return statements;
     }
 
-    // declaration    → varDecl | statement ;
+    // declaration    → funDecl | varDecl | statement ;
+    // funDecl        → "fun" function ;
     private Stmt declaration() {
         try {
-            if (match(VAR)) {
+            if (match(FUN)) {
+                return function("function");
+            } else if (match(VAR)) {
                 return varDeclaration();
             } else {
                 return statement();
@@ -64,6 +82,30 @@ class Parser {
         }
     }
 
+    // function       → IDENTIFIER "(" parameters? ")" block ;
+    // parameters     → IDENTIFIER ( "," IDENTIFIER )* ;
+    private Function function(String kind) {
+        Token name = consume(IDENTIFIER, "Expect " + kind + " name.");
+        consume(LEFT_PAREN, "Expect '(' after " + kind + " name.");
+        List<Token> parameters = new ArrayList<>();
+
+        if (!check(RIGHT_PAREN)) {
+            do {
+                // done in book, but not necessary:
+                // if (parameters.size() >= 255) {
+                //     error(peek(), "Can't have more than 255 parameters.");
+                // }
+
+                parameters.add(consume(IDENTIFIER, "Expect parameter name."));
+            } while (match(COMMA));
+        }
+
+        consume(RIGHT_PAREN, "Expect ')' after parameters.");
+        consume(LEFT_BRACE, "Expect '{' before " + kind + " body.");
+        List<Stmt> body = block();
+        return new Function(name, parameters, body);
+    }
+
     // varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
     private Stmt varDeclaration() {
         Token name = consume(IDENTIFIER, "Expect variable name.");
@@ -72,15 +114,94 @@ class Parser {
         return new Var(name, initializer);
     }
 
-    // statement      → exprStmt | printStmt | block ;
+    // statement      → exprStmt | printStmt | block | ifStmt | whileStmt | forStmt | returnStmt ;
     private Stmt statement() {
-        if (match(PRINT)) {
+        if (match(IF)) {
+            return ifStatement();
+        } else if (match(WHILE)) {
+            return whileStatement();
+        } else if (match(FOR)) {
+            return forStatement();
+        } else if (match(PRINT)) {
             return printStatement();
         } else if (match(LEFT_BRACE)) {
             return new Block(block());
+        } else if (match(RETURN)) {
+            return returnStatement();
         } else {
             return expressionStatement();
         }
+    }
+
+    // returnStmt     → "return" expression? ";" ;
+    private Stmt returnStatement() {
+        Token keyword = previous();
+        Expr value = check(SEMICOLON) ? null : expression();
+        consume(SEMICOLON, "Expect ';' after return value.");
+        return new ReturnStmt(keyword, value);
+    }
+
+    // ifStmt         → "if" "(" expression ")" statement ( "else" statement )? ;
+    private Stmt ifStatement() {
+        consume(LEFT_PAREN, "Expect '(' after 'if'.");
+        Expr condition = expression();
+        consume(RIGHT_PAREN, "Expect ')' after if condition.");
+        Stmt thenBranch = statement();
+        Stmt elseBranch = match(ELSE) ? statement() : null;
+        return new If(condition, thenBranch, elseBranch);
+    }
+
+    // whileStmt      → "while" "(" expression ")" statement ;
+    private Stmt whileStatement() {
+        consume(LEFT_PAREN, "Expect '(' after 'while'.");
+        Expr condition = expression();
+        consume(RIGHT_PAREN, "Expect ')' after condition.");
+        Stmt body = statement();
+        return new While(condition, body);
+    }
+
+    // forStmt        → "for" "("
+    //                 ( varDecl | exprStmt | ";" )
+    //                 expression? ";"
+    //                 expression? ")"
+    //                 statement ;
+    private Stmt forStatement() {
+        consume(LEFT_PAREN, "Expect '(' after 'for'.");
+
+        Stmt initializer;
+        if (match(SEMICOLON)) {
+            initializer = null;
+        } else if (match(VAR)) {
+            initializer = varDeclaration();
+        } else {
+            initializer = expressionStatement();
+        }
+
+        Expr condition = check(SEMICOLON) ? null : expression();
+        consume(SEMICOLON, "Expect ';' after loop condition.");
+
+        Expr update = check(RIGHT_PAREN) ? null : expression();
+        consume(RIGHT_PAREN, "Expect ')' after for clauses.");
+
+        Stmt body = statement();
+
+        // now desugar: turn the for loop into a while loop
+
+        if (update != null) {
+            body = new Block(List.of(body, new Expression(update)));
+        }
+
+        if (condition == null) {
+            body = new While(new Literal(true), body);
+        } else {
+            body = new While(condition, body);
+        }
+
+        if (initializer != null) {
+            body = new Block(List.of(initializer, body));
+        }
+
+        return body;
     }
 
     // printStmt      → "print" expression ";"
@@ -115,9 +236,9 @@ class Parser {
     }
 
     // assignment     → IDENTIFIER "=" assignment
-    //                | equality ;
+    //                | logic_or ;
     private Expr assignment() {
-        Expr expr = equality();
+        Expr expr = or();
 
         if (match(EQUAL)) {
             Token equals = previous();
@@ -129,6 +250,32 @@ class Parser {
                 // Report but don't throw an error.
                 error(equals, "Invalid assignment target.");
             }
+        }
+
+        return expr;
+    }
+
+    // logic_or       → logic_and ( "or" logic_and )* ;
+    private Expr or() {
+        Expr expr = and();
+
+        while (match(OR)) {
+            Token operator = previous();
+            Expr right = and();
+            expr = new Logical(expr, operator, right);
+        }
+
+        return expr;
+    }
+
+    // logic_and      → equality ( "and" equality )* ;
+    private Expr and() {
+        Expr expr = equality();
+
+        while (match(AND)) {
+            Token operator = previous();
+            Expr right = equality();
+            expr = new Logical(expr, operator, right);
         }
 
         return expr;
@@ -187,15 +334,49 @@ class Parser {
     }
 
     // unary          → ( "!" | "-" ) unary
-    //                | primary ;
+    //                | call ;
     private Expr unary() {
         if (match(BANG, MINUS)) {
             Token operator = previous();
             Expr right = unary();
             return new Unary(operator, right);
         } else {
-            return primary();
+            return call();
         }
+    }
+
+    // call           → primary ( "(" arguments? ")" )* ;
+    // arguments      → expression ( "," expression )* ;
+    private Expr call() {
+        Expr expr = primary();
+
+        while (true) {
+            if (match(LEFT_PAREN)) {
+                expr = finishCall(expr);
+            } else {
+                break;
+            }
+        }
+
+        return expr;
+    }
+
+    private Expr finishCall(Expr callee) {
+        List<Expr> arguments = new ArrayList<>();
+
+        if (!check(RIGHT_PAREN)) {
+            do {
+                // in book, but not necessary:
+                // if (arguments.size() >= 255) {
+                //     error(peek(), "Can't have more than 255 arguments.");
+                // }
+
+                arguments.add(expression());
+            } while (match(COMMA));
+        }
+
+        Token paren = consume(RIGHT_PAREN, "Expect ')' after arguments.");
+        return new Call(callee, paren, arguments);
     }
 
     // primary        → NUMBER | STRING | "true" | "false" | "nil"

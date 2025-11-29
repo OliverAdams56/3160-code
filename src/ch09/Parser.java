@@ -1,22 +1,31 @@
-package ch08;
+package ch09;
 
 import java.util.ArrayList;
 import java.util.List;
 
-import static ch08.TokenType.*;
+import static ch09.TokenType.*;
 
 /*
 program        → declaration* EOF ;
 declaration    → varDecl | statement ;
 varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
-statement      → exprStmt | printStmt | block ;
+statement      → exprStmt | printStmt | block | ifStmt | whileStmt | forStmt ;
 exprStmt       → expression ";" ;
 printStmt      → "print" expression ";" ;
 block          → "{" declaration* "}" ;
+ifStmt         → "if" "(" expression ")" statement ( "else" statement )? ;
+whileStmt      → "while" "(" expression ")" statement ;
+forStmt        → "for" "("
+                 ( varDecl | exprStmt | ";" )
+                 expression? ";"
+                 expression? ")"
+                 statement ;
 
 expression     → assignment ;
 assignment     → IDENTIFIER "=" assignment
-               | equality ;
+               | logic_or ;
+logic_or       → logic_and ( "or" logic_and )* ;
+logic_and      → equality ( "and" equality )* ;
 equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 term           → factor ( ( "-" | "+" ) factor )* ;
@@ -72,15 +81,84 @@ class Parser {
         return new Var(name, initializer);
     }
 
-    // statement      → exprStmt | printStmt | block ;
+    // statement      → exprStmt | printStmt | block | ifStmt | whileStmt | forStmt ;
     private Stmt statement() {
-        if (match(PRINT)) {
+        if (match(IF)) {
+            return ifStatement();
+        } else if (match(WHILE)) {
+            return whileStatement();
+        } else if (match(FOR)) {
+            return forStatement();
+        } else if (match(PRINT)) {
             return printStatement();
         } else if (match(LEFT_BRACE)) {
             return new Block(block());
         } else {
             return expressionStatement();
         }
+    }
+
+    // ifStmt         → "if" "(" expression ")" statement ( "else" statement )? ;
+    private Stmt ifStatement() {
+        consume(LEFT_PAREN, "Expect '(' after 'if'.");
+        Expr condition = expression();
+        consume(RIGHT_PAREN, "Expect ')' after if condition.");
+        Stmt thenBranch = statement();
+        Stmt elseBranch = match(ELSE) ? statement() : null;
+        return new If(condition, thenBranch, elseBranch);
+    }
+
+    // whileStmt      → "while" "(" expression ")" statement ;
+    private Stmt whileStatement() {
+        consume(LEFT_PAREN, "Expect '(' after 'while'.");
+        Expr condition = expression();
+        consume(RIGHT_PAREN, "Expect ')' after condition.");
+        Stmt body = statement();
+        return new While(condition, body);
+    }
+
+    // forStmt        → "for" "("
+    //                 ( varDecl | exprStmt | ";" )
+    //                 expression? ";"
+    //                 expression? ")"
+    //                 statement ;
+    private Stmt forStatement() {
+        consume(LEFT_PAREN, "Expect '(' after 'for'.");
+
+        Stmt initializer;
+        if (match(SEMICOLON)) {
+            initializer = null;
+        } else if (match(VAR)) {
+            initializer = varDeclaration();
+        } else {
+            initializer = expressionStatement();
+        }
+
+        Expr condition = check(SEMICOLON) ? null : expression();
+        consume(SEMICOLON, "Expect ';' after loop condition.");
+
+        Expr update = check(RIGHT_PAREN) ? null : expression();
+        consume(RIGHT_PAREN, "Expect ')' after for clauses.");
+
+        Stmt body = statement();
+
+        // now desugar: turn the for loop into a while loop
+
+        if (update != null) {
+            body = new Block(List.of(body, new Expression(update)));
+        }
+
+        if (condition == null) {
+            body = new While(new Literal(true), body);
+        } else {
+            body = new While(condition, body);
+        }
+
+        if (initializer != null) {
+            body = new Block(List.of(initializer, body));
+        }
+
+        return body;
     }
 
     // printStmt      → "print" expression ";"
@@ -115,9 +193,9 @@ class Parser {
     }
 
     // assignment     → IDENTIFIER "=" assignment
-    //                | equality ;
+    //                | logic_or ;
     private Expr assignment() {
-        Expr expr = equality();
+        Expr expr = or();
 
         if (match(EQUAL)) {
             Token equals = previous();
@@ -129,6 +207,32 @@ class Parser {
                 // Report but don't throw an error.
                 error(equals, "Invalid assignment target.");
             }
+        }
+
+        return expr;
+    }
+
+    // logic_or       → logic_and ( "or" logic_and )* ;
+    private Expr or() {
+        Expr expr = and();
+
+        while (match(OR)) {
+            Token operator = previous();
+            Expr right = and();
+            expr = new Logical(expr, operator, right);
+        }
+
+        return expr;
+    }
+
+    // logic_and      → equality ( "and" equality )* ;
+    private Expr and() {
+        Expr expr = equality();
+
+        while (match(AND)) {
+            Token operator = previous();
+            Expr right = equality();
+            expr = new Logical(expr, operator, right);
         }
 
         return expr;
